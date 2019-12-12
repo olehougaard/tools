@@ -47,10 +47,20 @@ class ParticipantMap(all: Set[Participant]) {
   def lookup(ids: Int*): Seq[Participant] = ids.map(participantMap)
 }
 
-case class Time(hours: Int, minutes: Int = 0) extends Ordered[Time] {
+class Time private(val hours: Int, val minutes: Int) extends Ordered[Time] {
   override def compare(that: Time): Int = if (hours != that.hours) hours - that.hours else minutes - that.minutes
   def forward(hours: Int, minutes: Int): Time = Time(this.hours + hours, this.minutes + minutes)
   def forward(minutes: Int): Time = forward(0, minutes)
+  override def toString: String = "%02d:%02d".format(hours, minutes)
+  override def equals(o: Any): Boolean = o match {
+    case t: Time => (hours, minutes) == (t.hours, t.minutes)
+    case _ => false
+  }
+  override def hashCode: Int = hours * 60 + minutes
+}
+
+object Time {
+  def apply(hours: Int, minutes: Int = 0) = new Time(hours + minutes / 60, minutes % 60)
 }
 
 class DaySchedule private(slots: Stream[Time], freeSlots: Set[Time], scheduled: Map[Time, String]) {
@@ -66,8 +76,8 @@ class DaySchedule private(slots: Stream[Time], freeSlots: Set[Time], scheduled: 
 
   def print(pw: PrintWriter) {
     slots.foreach {
-      case t if scheduled.isDefinedAt(t) => pw.println(s";$t;${scheduled(t)}}")
-      case t => pw.println(s";$t")
+      case t if scheduled.isDefinedAt(t) => pw.println(s";$t;${scheduled(t)}")
+      case _ =>
     }
   }
 }
@@ -100,6 +110,7 @@ class ExamSchedule {
   }
 
   def print(pw: PrintWriter): Unit = {
+    pw.println()
     days.foreach(_.print(pw))
   }
 }
@@ -113,6 +124,7 @@ class ExamScheduleBuilder(participants: Set[Participant]) {
     def assign(p: Participant): DayBuilder = assign(Seq(p))
     def availableSeats: Int = schedule.free.size - participants.size
     def hasAvailable: Boolean = availableSeats > 0
+
     def toDay: Day = {
       val plan = Random.shuffle(participants.toSeq)
       val daySchedule = (plan zip schedule.free.toSeq.sorted).foldLeft(schedule) {
@@ -137,6 +149,11 @@ class ExamScheduleBuilder(participants: Set[Participant]) {
   def constrain(headings: Set[String], ids: Int*): Unit = {
     constraints ++= ids.map(id => id -> headings)
   }
+
+  def unconstrained: Set[Participant] =
+    participants --
+      constraints.keys.map(participant) --
+      days.values.foldLeft(Set[Participant]())(_ | _.participants)
 
   def toExamSchedule: ExamSchedule = {
     val reserved = days.values.map(_.participants).reduce(_ | _)
@@ -164,20 +181,26 @@ object ExamShuffle extends App {
   val xExamDays = Set(_6, _7)
   val yExamDays = Set(_8, _9, _10)
 
+  val skeleton = DaySchedule(Time(8), Time(16), 20).assignSlot(Time(10), "Break").assignSlot(Time(12), "Lunch", 2)
+  val shortSkeleton = DaySchedule(Time(9), Time(16), 20).assignSlot(Time(12), "Lunch", 2)
   val builder = new ExamScheduleBuilder(swa)
+  xExamDays.foreach(builder.addDay(_, skeleton))
+  yExamDays.foreach(builder.addDay(_, shortSkeleton))
 
-  builder.reserve(_6, 253762, 260080, 253659, 254175, 253736, 253640, 166843, 253737, 242846, 260067, 166894, 261306, 261824)
+  builder.reserve(_6, 253762, 260080, 253659, 254175, 253736, 166843, 253737, 242846, 260067, 166894, 261306, 261824, 291156)
   builder.reserve(_7, 253899, 254162)
-  builder.reserve(_8, 239857, 240246, 253931, 253911, 253896, 253992, 254006)
-  builder.reserve(_9, 253931)
+  builder.reserve(_8, 239857, 240246, 253931, 253911, 253896, 253640, 253992, 253785, 254006, 240329)
+  builder.reserve(_9, 253979)
   builder.reserve(_10, 245496, 254134, 267311, 253736, 253668, 253651)
 
-  builder.constrain(Set(_6, _7), 253785, 220805)
+  builder.constrain(Set(_6, _7), 220805)
   builder.constrain(Set(_7, _8), 253810)
-  builder.constrain(Set(_8, _9), 254135, 253760, 253765, 240329)
+  builder.constrain(Set(_8, _9), 254135, 253760, 253765, 254163)
   builder.constrain(Set(_6, _9), 253746, 253739)
   builder.constrain(Set(_9, _10), 253904)
-  builder.constrain(yExamDays, 253979)
+
+  builder.constrain(xExamDays, (swa1x & builder.unconstrained).toSeq.map(_.id.toInt):_*)
+  builder.constrain(yExamDays, (swa1y & builder.unconstrained).toSeq.map(_.id.toInt):_*)
 
   val schedule = builder.toExamSchedule
   val pw = new PrintWriter(raw"C:\Users\Ole\Downloads\swa.csv", "windows-1252")
