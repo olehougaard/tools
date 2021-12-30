@@ -116,18 +116,19 @@ class ExamSchedule {
 }
 
 class ExamScheduleBuilder(participants: Set[Participant]) {
-  private class DayBuilder(val heading: String, val schedule: DaySchedule, val participants: Set[Participant] = Set()) {
+  private class DayBuilder(val heading: String, val schedule: DaySchedule, val participants: Seq[Participant] = Seq()) {
     def assign(ps: Seq[Participant]): DayBuilder = {
-      if (ps.size > availableSeats) throw new IllegalStateException("Overbooked")
+      if (ps.size > availableSeats) throw new IllegalStateException(heading + " overbooked")
       new DayBuilder(heading, schedule, participants ++ ps)
     }
     def assign(p: Participant): DayBuilder = assign(Seq(p))
     def availableSeats: Int = schedule.free.size - participants.size
     def hasAvailable: Boolean = availableSeats > 0
 
+    def shuffle = new DayBuilder(heading, schedule, Random.shuffle(participants))
+
     def toDay: Day = {
-      val plan = Random.shuffle(participants.toSeq)
-      val daySchedule = (plan zip schedule.free.toSeq.sorted).foldLeft(schedule) {
+      val daySchedule = (participants zip schedule.free.toSeq.sorted).foldLeft(schedule) {
         case (s, (p, t)) => s.assignSlot(t, s"${p.id};${p.name}")
       }
       Day(heading, daySchedule)
@@ -138,74 +139,53 @@ class ExamScheduleBuilder(participants: Set[Participant]) {
   private val participant = participants.map(p => p.id.toInt -> p).toMap
   private val constraints = mutable.Map[Int, Set[String]]()
 
-  def addDay(heading: String, schedule: DaySchedule) {
+  def addDay(heading: String, schedule: DaySchedule) = {
     days(heading) = new DayBuilder(heading, schedule)
+    this
   }
 
-  def reserve(heading: String, ids: Int*) {
+  def reserve(heading: String, ids: Int*) = {
     days(heading) = days(heading).assign(ids.map(participant))
+    this
   }
 
-  def constrain(headings: Set[String], ids: Int*): Unit = {
+  def constrain(headings: Set[String], ids: Int*) = {
     constraints ++= ids.map(id => id -> headings)
+    this
   }
-
-  def unconstrained: Set[Participant] =
-    participants --
-      constraints.keys.map(participant) --
-      days.values.foldLeft(Set[Participant]())(_ | _.participants)
 
   def toExamSchedule: ExamSchedule = {
-    val reserved = days.values.map(_.participants).reduce(_ | _)
+    val reserved = days.values.map(_.participants).reduce(_ ++ _).distinct
     val plan = days.clone
-    (participants -- reserved).foreach {
+    val unreserved = participants -- reserved
+    Random.shuffle(unreserved).foreach {
       p =>
         val availableDays = constraints.getOrElse(p.id.toInt, plan.keys).map(plan).toSeq
         val bestDay = availableDays.maxBy(_.availableSeats)
+        if (bestDay.hasAvailable) plan(bestDay.heading) = bestDay.assign(p)
+    }
+    plan.values.foreach { d => plan(d.heading) = d.shuffle }
+    val assigned = plan.values.map(_.participants).reduce(_ ++ _).distinct
+    (participants -- assigned).foreach {
+      p =>
+        val bestDay = plan.values.filter(_.hasAvailable).maxBy(_.availableSeats)
         plan(bestDay.heading) = bestDay.assign(p)
     }
     val schedule = new ExamSchedule
-    plan.values.foreach(d => schedule.addDay(d.toDay))
+    plan.values.foreach(d => schedule.addDay(d.shuffle.toDay))
     schedule
   }
 }
 
 object ExamShuffle extends App {
-  val swa1x = HtmlTableParser.students("IT-SWA1X-A19")
-  val swa1y = HtmlTableParser.students("IT-SWA1Y-A19")
-  val swa = swa1x | swa1y
+  val swa = HtmlTableParser.students("download")
   val students = swa.map(p => p.id.toInt -> p).toMap
 
-  val headings = Seq("Monday 6 January", "Tuesday 7 January", "Wednesday 8 January", "Thursday 9 January", "Friday 10 January")
-  val Seq(_6, _7, _8, _9, _10) = headings
-  val xExamDays = Set(_6, _7)
-  val yExamDays = Set(_8, _9, _10)
-
-  val skeleton = DaySchedule(Time(8), Time(16), 20).assignSlot(Time(10), "Break").assignSlot(Time(12), "Lunch", 2)
-  val shortSkeleton = DaySchedule(Time(9), Time(16), 20).assignSlot(Time(12), "Lunch", 2)
-  val builder = new ExamScheduleBuilder(swa)
-  xExamDays.foreach(builder.addDay(_, skeleton))
-  yExamDays.foreach(builder.addDay(_, shortSkeleton))
-
-  builder.reserve(_6, 253762, 260080, 253659, 254175, 253736, 166843, 253737, 242846, 260067, 166894, 261306, 261824, 291156)
-  builder.reserve(_7, 253899, 254162)
-  builder.reserve(_8, 239857, 240246, 253931, 253911, 253896, 253640, 253992, 253785, 254006, 240329)
-  builder.reserve(_9, 253979)
-  builder.reserve(_10, 245496, 254134, 267311, 253736, 253668, 253651)
-
-  builder.constrain(Set(_6, _7), 220805)
-  builder.constrain(Set(_7, _8), 253810)
-  builder.constrain(Set(_8, _9), 254135, 253760, 253765, 254163)
-  builder.constrain(Set(_6, _9), 253746, 253739)
-  builder.constrain(Set(_9, _10), 253904)
-
-  builder.constrain(xExamDays, (swa1x & builder.unconstrained).toSeq.map(_.id.toInt):_*)
-  builder.constrain(yExamDays, (swa1y & builder.unconstrained).toSeq.map(_.id.toInt):_*)
-
-  val schedule = builder.toExamSchedule
-  val pw = new PrintWriter(raw"C:\Users\Ole\Downloads\swa.csv", "windows-1252")
+  val pw = new PrintWriter(raw"C:\Users\Ole\Downloads\swe.csv", "windows-1252")
   try {
-    schedule.print(pw)
+    new ExamScheduleBuilder(swa)
+      .addDay("Thursday 13 January", DaySchedule(Time(8), Time(18), 20).assignSlot(Time(12), "Break", 2))
+      .toExamSchedule.print(pw)
   } finally {
     pw.close()
   }
