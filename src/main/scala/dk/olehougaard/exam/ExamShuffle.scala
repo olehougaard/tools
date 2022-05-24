@@ -38,7 +38,7 @@ object HtmlTableParser {
     x.toSet
   }
   def participants(className: String): Set[Participant] =
-    HtmlTableParser.parse(FileIO.loadTextFile(s"C:\\Users\\Ole\\Downloads\\$className.xls"))
+    HtmlTableParser.parse(FileIO.loadTextFile(s"${System.getProperty("user.home")}\\Downloads\\$className.xls"))
   def students(className: String): Set[Participant] = participants(className).filter(_.role == "Studerende")
 }
 
@@ -74,7 +74,7 @@ class DaySchedule private(slots: Stream[Time], freeSlots: Set[Time], scheduled: 
   def schedule: Map[Time, String] = scheduled
   def free: Set[Time] = freeSlots
 
-  def print(pw: PrintWriter) {
+  def print(pw: PrintWriter): Unit = {
     slots.foreach {
       case t if scheduled.isDefinedAt(t) => pw.println(s";$t;${scheduled(t)}")
       case _ =>
@@ -105,7 +105,7 @@ case class Day(heading: String, schedule: DaySchedule) {
 class ExamSchedule {
   private var days = Seq[Day]()
 
-  def addDay(day: Day) {
+  def addDay(day: Day): Unit = {
     days = days :+ day
   }
 
@@ -139,17 +139,17 @@ class ExamScheduleBuilder(participants: Set[Participant]) {
   private val participant = participants.map(p => p.id.toInt -> p).toMap
   private val constraints = mutable.Map[Int, Set[String]]()
 
-  def addDay(heading: String, schedule: DaySchedule) = {
+  def addDay(heading: String, schedule: DaySchedule): ExamScheduleBuilder = {
     days(heading) = new DayBuilder(heading, schedule)
     this
   }
 
-  def reserve(heading: String, ids: Int*) = {
+  def reserve(heading: String, ids: Int*): ExamScheduleBuilder = {
     days(heading) = days(heading).assign(ids.map(participant))
     this
   }
 
-  def constrain(headings: Set[String], ids: Int*) = {
+  def constrain(headings: Set[String], ids: Int*): ExamScheduleBuilder = {
     constraints ++= ids.map(id => id -> headings)
     this
   }
@@ -178,13 +178,22 @@ class ExamScheduleBuilder(participants: Set[Participant]) {
 }
 
 object ExamShuffle extends App {
-  val swa = HtmlTableParser.students("download")
-  val students = swa.map(p => p.id.toInt -> p).toMap
+  val nsq1x = HtmlTableParser.students("IT-NSQ1X")
+  val nsq1y = HtmlTableParser.students("IT-NSQ1Y")
+  val nsq1 = Set(Participant("280593", "Florin-Leonard Bordei", "Student"))
+  val nsq = nsq1x | nsq1y | nsq1
+  val students = nsq.map(p => p.id.toInt -> p).toMap
 
-  val pw = new PrintWriter(raw"C:\Users\Ole\Downloads\swe.csv", "windows-1252")
+  val pw = new PrintWriter(s"${System.getProperty("user.home")}\\Downloads\\nsq.csv", "windows-1252")
   try {
-    new ExamScheduleBuilder(swa)
-      .addDay("Thursday 13 January", DaySchedule(Time(8), Time(18), 20).assignSlot(Time(12), "Break", 2))
+    val daySchedule = DaySchedule(Time(8), Time(15, 40), 20)
+      .assignSlot(Time(10), "Break", 1)
+      .assignSlot(Time(12), "Break", 2)
+    new ExamScheduleBuilder(nsq)
+      .addDay("Monday 20 June", daySchedule)
+      .addDay("Tuesday 21 June", daySchedule)
+      .addDay("Wednesay 22 June", daySchedule)
+      .reserve("Monday 20 June", 264247, 273961, 273962, 281335)
       .toExamSchedule.print(pw)
   } finally {
     pw.close()
