@@ -1,7 +1,7 @@
 scalaVersion := "2.12.7"
 
-name := "Tools"
+name := "tools"
 organization := "dk.olehougaard"
 version := "1.0"
 
-mainClass in (Compile, run) := Some("dk.olehougaard.ExamShuffle")
+Compile / run / mainClass := Some("dk.olehougaard.ExamShuffle")
