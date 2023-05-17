@@ -1,19 +1,11 @@
 package dk.olehougaard.exam
 
 import java.io.{BufferedReader, FileReader, PrintWriter}
-
 import scala.collection.mutable
-import scala.util.{Random, Try}
+import scala.io.Source
+import scala.util.{Random, Try, Using}
 
 case class Participant(id: String, name: String, role: String)
-
-object ListFactory {
-  def generateWhile[T](cond: => Boolean)(generator: => T): List[T] = {
-    var list = List[T]()
-    while(cond) list = generator :: list
-    list.reverse
-  }
-}
 
 object FileIO {
   def loadTextFile(path: String): String = {
@@ -25,10 +17,13 @@ object FileIO {
     r.foreach(_.close())
     s.get
   }
+
+  def home = System.getProperty("user.home")
+  def toDownloadPath(name: String) = s"$home\\Downloads\\$name"
 }
 
 object HtmlTableParser {
-  def parse(html: String): Set[Participant] = {
+  private def parseHTML(html: String): Set[Participant] = {
     val rowRE = raw"<tr>.*?</tr>".r
     val x = rowRE.findAllIn(html).drop(1).flatMap{ row =>
       val cellRE = raw"<td>(.*?)</td><td>.*?</td><td>.*?</td><td>(.*?)</td><td>.*?</td><td>(.*?)</td><td>.*?</td>".r
@@ -37,9 +32,28 @@ object HtmlTableParser {
     }
     x.toSet
   }
-  def participants(className: String): Set[Participant] =
-    HtmlTableParser.parse(FileIO.loadTextFile(s"${System.getProperty("user.home")}\\Downloads\\$className.xls"))
-  def students(className: String): Set[Participant] = participants(className).filter(_.role == "Studerende")
+  private def parseCSV(lines: Seq[String]): Set[Participant] = {
+    val emailRE = raw"(.*)@viauc\.dk".r
+    lines
+      .map(_.trim)
+      .map(_.split(';'))
+      .map({case Array(name, email, role) =>
+        val id = emailRE.findFirstMatchIn(email).fold(email)(_.group(1))
+        Participant(id, name, role)
+      })
+      .toSet
+  }
+  def participantsHTML(className: String): Set[Participant] =
+    HtmlTableParser.parseHTML(FileIO.loadTextFile(FileIO.toDownloadPath(s"$className.xls")))
+
+  def participantsCSV(className: String): Set[Participant] = {
+    val source = Source.fromFile(FileIO.toDownloadPath(s"$className.csv"))
+    try {
+      parseCSV(source.getLines().toSeq)
+    } finally {
+      source.close()
+    }
+  }
 }
 
 class ParticipantMap(all: Set[Participant]) {
@@ -144,10 +158,14 @@ class ExamScheduleBuilder(participants: Set[Participant]) {
     this
   }
 
+  def reserve(heading: String, participants: Set[Participant]): ExamScheduleBuilder = reserve(heading, participants.map(_.id.toInt).toSeq:_*)
+
   def reserve(heading: String, ids: Int*): ExamScheduleBuilder = {
     days(heading) = days(heading).assign(ids.map(participant))
     this
   }
+
+  def constrain(headings: Set[String], participants: Set[Participant]): ExamScheduleBuilder = constrain(headings, participants.map(_.id.toInt).toSeq: _*)
 
   def constrain(headings: Set[String], ids: Int*): ExamScheduleBuilder = {
     constraints ++= ids.map(id => id -> headings)
@@ -174,28 +192,5 @@ class ExamScheduleBuilder(participants: Set[Participant]) {
     val schedule = new ExamSchedule
     plan.values.foreach(d => schedule.addDay(d.shuffle.toDay))
     schedule
-  }
-}
-
-object ExamShuffle extends App {
-  val nsq1x = HtmlTableParser.students("IT-NSQ1X")
-  val nsq1y = HtmlTableParser.students("IT-NSQ1Y")
-  val nsq1 = Set(Participant("280593", "Florin-Leonard Bordei", "Student"))
-  val nsq = nsq1x | nsq1y | nsq1
-  val students = nsq.map(p => p.id.toInt -> p).toMap
-
-  val pw = new PrintWriter(s"${System.getProperty("user.home")}\\Downloads\\nsq.csv", "windows-1252")
-  try {
-    val daySchedule = DaySchedule(Time(8), Time(15, 40), 20)
-      .assignSlot(Time(10), "Break", 1)
-      .assignSlot(Time(12), "Break", 2)
-    new ExamScheduleBuilder(nsq)
-      .addDay("Monday 20 June", daySchedule)
-      .addDay("Tuesday 21 June", daySchedule)
-      .addDay("Wednesay 22 June", daySchedule)
-      .reserve("Monday 20 June", 264247, 273961, 273962, 281335)
-      .toExamSchedule.print(pw)
-  } finally {
-    pw.close()
   }
 }
